@@ -1,5 +1,9 @@
 # claude-clip
 
+
+https://github.com/user-attachments/assets/02ce11c2-b27b-4b6b-b5ba-2c7602d15546
+
+
 A [Claude Code](https://docs.anthropic.com/en/docs/claude-code) skill that copies Claude's last response to your clipboard, cleaned up and formatted for wherever you're pasting it.
 
 Claude Code wraps its output with `⏺` bullets and 2-space indentation. That's fine in the terminal, but messy when you paste into Slack, Linear, a doc, or an email. `/clip` strips the noise and reformats for your target.
