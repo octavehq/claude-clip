@@ -122,9 +122,48 @@ def is_table_row(line: str) -> bool:
     return bool(re.match(r"^\|", line))
 
 
+# Claude Code soft-wraps lines near this character width. Lines shorter than
+# this were intentionally broken by the author, not by the wrapping engine.
+_WRAP_THRESHOLD = 72
+
+
+def _is_block_start(line: str) -> bool:
+    """Return True if this line looks like the start of a new logical block
+    (not a continuation of a soft-wrapped sentence)."""
+    # List items
+    if is_list_item(line):
+        return True
+    # Table rows
+    if is_table_row(line):
+        return True
+    # Headers
+    if re.match(r"^#{1,6}\s", line):
+        return True
+    # Blockquote start
+    if line.startswith("> "):
+        return True
+    # Unicode bullets (•, ▪, ▸, ◦, etc.)
+    if line and line[0] in "•▪▸◦◆◇►▷‣⁃":
+        return True
+    # Bold/italic label at start of line: *Word:* or **Word:** patterns
+    # These are definition-style labels that should always start a new line
+    # Matches: *What:* ..., **Why:** ..., *Focus Areas:*, _How:_ etc.
+    if re.match(r"^(\*{1,2}|_{1,2})[^*_]+:\1", line):
+        return True
+    return False
+
+
 def unwrap_paragraph(lines: List[str]) -> List[str]:
     """Join soft-wrapped lines within a paragraph into logical lines.
-    A new logical line starts whenever a list item marker appears.
+
+    Key heuristic: Claude Code wraps at ~76-80 chars. If the previous line is
+    shorter than _WRAP_THRESHOLD, the line break was intentional and we preserve
+    it. Only lines that are long enough to have been soft-wrapped get joined
+    with the next line.
+
+    Block-start markers (list items, headers, blockquotes, bullets) always
+    start a new logical line regardless of previous line length.
+
     Blockquote continuation markers (leading `> `) are stripped before joining
     so a multi-line blockquote becomes a single `> ...` line."""
     if not lines:
@@ -133,23 +172,33 @@ def unwrap_paragraph(lines: List[str]) -> List[str]:
     current = ""
     current_is_quote = False
     for ln in lines:
-        if is_list_item(ln) or is_table_row(ln):
-            if current:
-                logical.append(current)
-            current = ln
-            current_is_quote = False
-            continue
+        # Blockquote continuation: join if we're already in a quote
+        # (must check before _is_block_start since `> ` is a block-start marker)
         if current_is_quote and ln.startswith(">"):
-            # Strip continuation quote marker and join
             cont = re.sub(r"^>\s?", "", ln)
             current += " " + cont
             continue
-        if not current and ln.startswith("> "):
+        # Block-start markers always begin a new logical line
+        if _is_block_start(ln):
+            if current:
+                logical.append(current)
             current = ln
-            current_is_quote = True
+            current_is_quote = ln.startswith("> ")
             continue
-        if current:
+        # The core heuristic: only join if the previous line was long enough
+        # to have been soft-wrapped by Claude Code's line wrapping.
+        # Exception: continuation of a list item (current line is indented text
+        # after a list item marker) should always join regardless of length,
+        # because list items are often short with wrapped content below.
+        prev_is_list = current and is_list_item(current)
+        prev_long = current and len(current.rstrip()) >= _WRAP_THRESHOLD
+        if current and (prev_long or prev_is_list):
             current += " " + ln
+        elif current:
+            # Previous line was short → intentional break → new logical line
+            logical.append(current)
+            current = ln
+            current_is_quote = ln.startswith("> ")
         else:
             current = ln
             current_is_quote = ln.startswith("> ")
