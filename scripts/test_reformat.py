@@ -41,9 +41,8 @@ SAMPLE_WHAT_ELSE = _dedent_raw("""
 
   # Key insight
 
-  The **qual-doctor** skill we built has a *hidden* duplicate of the
-  [ads-resonance](https://example.com/ads) prediction card system, and
-  ~~neither~~ one knows about the other yet. Use `update_entity` carefully.
+  The **qual-doctor** skill we built has a *hidden* duplicate of the [ads-resonance](https://example.com/ads)
+  prediction card system, and ~~neither~~ one knows about the other yet. Use `update_entity` carefully.
 
   - First item that wraps across
     multiple lines
@@ -122,8 +121,15 @@ class TestParseBlocks(unittest.TestCase):
 class TestUnwrapParagraph(unittest.TestCase):
 
     def test_joins_softwrapped_prose(self):
-        result = unwrap_paragraph(["one two", "three four", "five six"])
-        self.assertEqual(result, ["one two three four five six"])
+        # Lines must be >= 72 chars to trigger soft-wrap joining
+        long_line = "The quick brown fox jumps over the lazy dog and continues running across the"
+        result = unwrap_paragraph([long_line, "vast open field"])
+        self.assertEqual(result, [long_line + " vast open field"])
+
+    def test_short_lines_not_joined(self):
+        # Short lines are intentional breaks, not soft wraps
+        result = unwrap_paragraph(["*What:* First thing", "*Why:* Second thing"])
+        self.assertEqual(result, ["*What:* First thing", "*Why:* Second thing"])
 
     def test_list_items_are_separate_logical_lines(self):
         result = unwrap_paragraph([
@@ -150,9 +156,11 @@ class TestUnwrapParagraph(unittest.TestCase):
 class TestRenderMd(unittest.TestCase):
 
     def test_strips_bullet_and_unwraps(self):
-        out = reformat("⏺ header\n\n  first line\n  second line", "md")
+        # Lines must be long enough (>=72 chars) to be treated as soft-wrapped
+        long_line = "This is a long first line that exceeds the wrap threshold used by Claude Code output"
+        out = reformat(f"⏺ header\n\n  {long_line}\n  second line", "md")
         self.assertIn("header", out)
-        self.assertIn("first line second line", out)
+        self.assertIn(long_line + " second line", out)
         self.assertNotIn("⏺", out)
 
     def test_preserves_markdown_syntax(self):
@@ -171,6 +179,7 @@ class TestRenderMd(unittest.TestCase):
         self.assertNotIn("  code line", out)
 
     def test_blockquote_unwrapped(self):
+        # Blockquote continuation always joins regardless of line length
         out = reformat("> line one\n> line two", "md")
         self.assertIn("> line one line two", out)
 
@@ -342,7 +351,7 @@ class TestWhatElseSample(unittest.TestCase):
 
     def test_md_unwraps_paragraph(self):
         out = reformat(SAMPLE_WHAT_ELSE, "md")
-        # The three-line sentence must join into one line
+        # The two-line sentence must join into one line (first line is >72 chars)
         self.assertIn(
             "The **qual-doctor** skill we built has a *hidden* duplicate of the "
             "[ads-resonance](https://example.com/ads) prediction card system, and "
@@ -433,15 +442,34 @@ class TestEdgeCases(unittest.TestCase):
         self.assertIn("[here](https://x.com)", out)
         self.assertIn("*", out)
 
+    def test_slack_labels_stay_on_separate_lines(self):
+        """Regression: *What:*, *Why:*, *How:* labels should not be joined."""
+        text = "*What:* First description.\n*Why:* Second reason.\n*How:*\n• Step one\n• Step two"
+        out = reformat(text, "slack")
+        # Each label should be on its own line, not joined
+        self.assertIn("_What:_", out)
+        self.assertIn("_Why:_", out)
+        lines = out.strip().split("\n")
+        what_line = [l for l in lines if "_What:_" in l][0]
+        why_line = [l for l in lines if "_Why:_" in l][0]
+        self.assertNotIn("_Why:_", what_line)  # They must be separate lines
+
     def test_trailing_newlines_collapsed(self):
         out = reformat("hello\n\n\n\n\n", "md")
         # Should not produce runs of blank lines
         self.assertFalse("\n\n\n" in out)
 
     def test_no_bullet_at_all(self):
-        # Input without ⏺ should still get dedented + unwrapped
+        # Input without ⏺ should still get dedented; short lines stay separate
         out = reformat("  first line\n  second line", "md")
-        self.assertIn("first line second line", out)
+        self.assertIn("first line", out)
+        self.assertIn("second line", out)
+
+    def test_no_bullet_long_line_unwraps(self):
+        # Long lines (>=72 chars) still get unwrapped even without ⏺
+        long = "  This is a very long first line that definitely exceeds the seventy-two character wrap threshold"
+        out = reformat(f"{long}\n  and continues here", "md")
+        self.assertIn("threshold and continues here", out)
 
 
 # ---------- comprehensive Slack test ----------
